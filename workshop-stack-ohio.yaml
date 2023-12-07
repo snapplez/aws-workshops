@@ -1,0 +1,212 @@
+---
+#===============================================================================
+AWSTemplateFormatVersion: 2010-09-09
+
+Metadata:
+  StackName: WorkshopStackOhio
+  Generator: Simon Kane
+
+Description: This is a template for us-east-2 (Ohio)
+
+# CIDR                 COUNT  USE/SCOPE    ZONE IP RANGE
+# ==================== ====== ============ ==== ================================
+# OREGON - US-WEST-2
+#
+# 10.11.0.0/24 ....... 256 .. VPC ......... A .. (10.11.0.0 to 10.11.0.255)
+#
+#   10.11.0.0/26 .....  64 .. PRIVATE 1 ... A .. 10.11.0.0 to 10.11.0.63
+#   10.11.0.64/26 ....  64 .. PRIVATE 2 ... B .. 10.11.0.64 to 10.11.0.127
+#   10.11.0.128/26 ...  64 .. PUBLIC 1 .... A .. 10.11.0.128 to 10.11.0.191
+#   10.11.0.192/26 ...  64 .. PUBLIC 2 .... B .. 10.11.0.128 to 10.11.0.255
+#
+# OHIO - US-EAST-2
+#
+# 10.12.0.0/24 ....... 256 .. VPC ......... A .. (10.12.0.0 to 10.12.0.255)
+# 
+#   10.12.0.0/26 .....  64 .. PRIVATE 3 ... A .. 10.12.0.0 to 10.12.0.63
+#   10.12.0.64/26 ....  64 .. PRIVATE 4 ... B .. 10.12.0.64 to 10.12.0.127
+#   10.12.0.128/26 ...  64 .. PUBLIC 3 .... A .. 10.12.0.128 to 10.12.0.191
+#   10.12.0.192/26 ...  64 .. PUBLIC 4 .... B .. 10.12.0.128 to 10.12.0.255
+#
+# ==============================================================================
+#  Region: Oregon (us-west-2)
+#    VPC: WorkshopVPC
+#      Subnet: WorkshopPrivateSubnet1 / us-west-2a
+#        Cloud9: WorkshopCloud9Environment
+#      Subnet: WorkshopPublicSubnet1 / us-west-2a
+#        MQ: WorkshopBroker1
+#
+#  Region: Ohio (us-east-2)
+#    VPC: WorkshopVPC
+#      Subnet: WorkshopPrivateSubnet2
+#        Cloud9: WorkshopCloud9Environment
+#      Subnet: WorkshopPublicSubnet2
+#        MQ: WorkshopBroker2
+#
+
+# 10.11.0.126 ........ temp elb target (private)
+
+#===============================================================================
+Parameters:
+  WorkshopVPC1Id:
+    Description: Paste in the VPC ID from the first region.
+    Type: String
+    Default: 'vpc-00000000000000000'
+    MinLength: 21
+    AllowedPattern: ^(vpc-([0-9a-f]{17}))$
+    ConstraintDescription: Must be a valid VPC Id
+
+
+#===============================================================================
+Resources:
+
+  #--[AWS VPC]------------------------------------------------------------------
+  # create workshop vpc
+  WorkshopVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.12.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: WorkshopVPC}]
+
+  # create route table in vpc
+  WorkshopRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WorkshopVPC
+      Tags:
+      Tags: [{Key: Name, Value: WorkshopRouteTable}]
+
+  # create internet gateway
+  WorkshopInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{Key: Name, Value: WorkshopInternetGateway}]
+
+  # attach internet to vpc
+  WorkshopInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref WorkshopVPC
+      InternetGatewayId: !Ref WorkshopInternetGateway
+
+  # add default route (internet route) to route table
+  WorkshopDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref WorkshopRouteTable
+      GatewayId: !Ref WorkshopInternetGateway
+
+  # create private subnet 3 - 10.11.16.0 to 10.11.23.255
+  WorkshopPrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WorkshopVPC
+      CidrBlock: 10.12.0.0/25
+      AvailabilityZone: us-east-2a
+      Tags: [{Key: Name, Value: WorkshopPrivateSubnet3}]
+
+  WorkshopPrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref WorkshopRouteTable
+      SubnetId: !Ref WorkshopPrivateSubnet3
+
+  # create public subnet 3 - 10.11.24.0 to 10.11.47.255
+  WorkshopPublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WorkshopVPC
+      CidrBlock: 10.12.0.128/25
+      AvailabilityZone: us-east-2a
+      Tags: [{Key: Name, Value: WorkshopPublicSubnet3}]
+
+  WorkshopPublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref WorkshopRouteTable
+      SubnetId: !Ref WorkshopPublicSubnet3
+
+  #--[SECURITY GROUPS]----------------------------------------------------------
+  WorkshopSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref WorkshopVPC
+      GroupDescription: Allow AMQP protocol, Allow HTTPS
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5671
+          ToPort: 5671
+          CidrIp: 10.12.0.0/24
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.12.0.0/24
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 10.12.0.0/24
+      Tags: [{Key: Name, Value: WorkshopSecurityGroup}]
+
+  #--[AMAZON MQ]----------------------------------------------------------------
+  WorkshopBroker2:
+    Type: AWS::AmazonMQ::Broker
+    Properties: 
+      BrokerName: WorkshopBroker2
+      HostInstanceType: mq.t3.micro
+      PubliclyAccessible: false
+      EngineType: RabbitMQ
+      EngineVersion: "3.11.20"
+      AutoMinorVersionUpgrade: false
+      DeploymentMode: SINGLE_INSTANCE
+      SecurityGroups:
+        - !Ref WorkshopSecurityGroup
+      SubnetIds:
+        - !Ref WorkshopPrivateSubnet3
+      Users: [{Username: rabbit, Password: secret-rabbit}]
+
+  #--[VPC PEERING]--------------------------------------------------------------
+  WorkshopVPCPeeringConnection:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref WorkshopVPC
+      PeerRegion: us-west-2
+      PeerVpcId: !Ref WorkshopVPC1Id
+      Tags: [{Key: Name, Value: WorkshopVPCPeeringConnection}]
+
+
+#===============================================================================
+Outputs:
+  VpcId:
+    Description: Workshop VPC ID
+    Value: !Ref WorkshopVPC
+
+#  BrokerId:
+#    Value: !Ref BrokerTwo
+#    Description: Rabbit MQ Broker ID
+#  BrokerEndpoints:
+#    Value: !Join
+#      - '-'
+#      - !GetAtt BrokerTwo.AmqpEndpoints
+#    Description: Rabbit MQ Endpoints
+
+#    LoadBalancer:
+#        Description: A reference to the Application Load Balancer
+#        Value: !Ref LoadBalancer
+#
+#    LoadBalancerUrl:
+#        Description: The URL of the ALB
+#        Value: !GetAtt LoadBalancer.DNSName
+#
+#    Listener:
+#        Description: A reference to a port 80 listener
+#        Value: !Ref LoadBalancerListener  
+#
+#    TargetGroup:
+#        Description: A reference to the target group
+#        Value: !Ref TargetGroup
+
+
+...
